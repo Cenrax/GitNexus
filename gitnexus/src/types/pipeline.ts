@@ -1,7 +1,6 @@
-import { GraphNode, GraphRelationship, KnowledgeGraph } from '../core/graph/types';
-import { CommunityDetectionResult } from '../core/ingestion/community-processor';
-import { ProcessDetectionResult } from '../core/ingestion/process-processor';
-import { MetricsResult } from '../core/ingestion/metrics-processor';
+import { GraphNode, GraphRelationship, KnowledgeGraph } from '../core/graph/types.js';
+import { CommunityDetectionResult } from '../core/ingestion/community-processor.js';
+import { ProcessDetectionResult } from '../core/ingestion/process-processor.js';
 
 export type PipelinePhase = 'idle' | 'extracting' | 'structure' | 'parsing' | 'imports' | 'calls' | 'heritage' | 'communities' | 'processes' | 'metrics' | 'enriching' | 'complete' | 'error';
 
@@ -20,10 +19,12 @@ export interface PipelineProgress {
 // Original result type (used internally in pipeline)
 export interface PipelineResult {
   graph: KnowledgeGraph;
-  fileContents: Map<string, string>;
+  /** Absolute path to the repo root — used for lazy file reads during LadybugDB loading */
+  repoPath: string;
+  /** Total files scanned (for stats) */
+  totalFileCount: number;
   communityResult?: CommunityDetectionResult;
   processResult?: ProcessDetectionResult;
-  metricsResult?: MetricsResult;
 }
 
 // Serializable version for Web Worker communication
@@ -31,14 +32,16 @@ export interface PipelineResult {
 export interface SerializablePipelineResult {
   nodes: GraphNode[];
   relationships: GraphRelationship[];
-  fileContents: Record<string, string>; // Object instead of Map
+  repoPath: string;
+  totalFileCount: number;
 }
 
 // Helper to convert PipelineResult to serializable format
 export const serializePipelineResult = (result: PipelineResult): SerializablePipelineResult => ({
-  nodes: result.graph.nodes,
-  relationships: result.graph.relationships,
-  fileContents: Object.fromEntries(result.fileContents),
+  nodes: [...result.graph.iterNodes()],
+  relationships: [...result.graph.iterRelationships()],
+  repoPath: result.repoPath,
+  totalFileCount: result.totalFileCount,
 });
 
 // Helper to reconstruct from serializable format (used in main thread)
@@ -49,10 +52,11 @@ export const deserializePipelineResult = (
   const graph = createGraph();
   serialized.nodes.forEach(node => graph.addNode(node));
   serialized.relationships.forEach(rel => graph.addRelationship(rel));
-  
+
   return {
     graph,
-    fileContents: new Map(Object.entries(serialized.fileContents)),
+    repoPath: serialized.repoPath,
+    totalFileCount: serialized.totalFileCount,
   };
 };
 

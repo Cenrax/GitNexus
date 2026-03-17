@@ -1,5 +1,5 @@
 import { LRUCache } from 'lru-cache';
-import Parser from 'web-tree-sitter';
+import Parser from 'tree-sitter';
 
 // Define the interface for the Cache
 export interface ASTCache {
@@ -10,14 +10,16 @@ export interface ASTCache {
 }
 
 export const createASTCache = (maxSize: number = 50): ASTCache => {
+  const effectiveMax = Math.max(maxSize, 1);
   // Initialize the cache with a 'dispose' handler
   // This is the magic: When an item is evicted (dropped), this runs automatically.
   const cache = new LRUCache<string, Parser.Tree>({
-    max: maxSize,
+    max: effectiveMax,
     dispose: (tree) => {
       try {
-        // CRITICAL: Free the WASM memory when the tree leaves the cache
-        tree.delete();
+        // NOTE: web-tree-sitter has tree.delete(); native tree-sitter trees are GC-managed.
+        // Keep this try/catch so we don't crash on either runtime.
+        (tree as any).delete?.();
       } catch (e) {
         console.warn('Failed to delete tree from WASM memory', e);
       }
@@ -40,7 +42,7 @@ export const createASTCache = (maxSize: number = 50): ASTCache => {
 
     stats: () => ({
       size: cache.size,
-      maxSize: maxSize
+      maxSize: effectiveMax
     })
   };
 };

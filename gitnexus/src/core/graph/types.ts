@@ -15,16 +15,38 @@ export type NodeLabel =
   | 'Type'
   | 'CodeElement'
   | 'Community'
-  | 'Process';
+  | 'Process'
+  // Multi-language node types
+  | 'Struct'
+  | 'Macro'
+  | 'Typedef'
+  | 'Union'
+  | 'Namespace'
+  | 'Trait'
+  | 'Impl'
+  | 'TypeAlias'
+  | 'Const'
+  | 'Static'
+  | 'Property'
+  | 'Record'
+  | 'Delegate'
+  | 'Annotation'
+  | 'Constructor'
+  | 'Template';
 
+
+import { SupportedLanguages } from '../../config/supported-languages.js';
 
 export type NodeProperties = {
   name: string,
   filePath: string,
   startLine?: number,
   endLine?: number,
-  language?: string,
+  language?: SupportedLanguages,
   isExported?: boolean,
+  // Optional AST-derived framework hint (e.g. @Controller, @GetMapping)
+  astFrameworkMultiplier?: number,
+  astFrameworkReason?: string,
   // Community-specific properties
   heuristicLabel?: string,
   cohesion?: number,
@@ -48,19 +70,23 @@ export type NodeProperties = {
   loc?: number,
   instability?: number,
   complexityRank?: 'low' | 'medium' | 'high' | 'critical',
+  // Method signature (for MRO disambiguation)
+  parameterCount?: number,
+  returnType?: string,
 }
 
-export type RelationshipType = 
-  | 'CONTAINS' 
-  | 'CALLS' 
-  | 'INHERITS' 
-  | 'OVERRIDES' 
+export type RelationshipType =
+  | 'CONTAINS'
+  | 'CALLS'
+  | 'INHERITS'
+  | 'OVERRIDES'
   | 'IMPORTS'
   | 'USES'
   | 'DEFINES'
   | 'DECORATES'
   | 'IMPLEMENTS'
   | 'EXTENDS'
+  | 'HAS_METHOD'
   | 'MEMBER_OF'
   | 'STEP_IN_PROCESS'
 
@@ -84,10 +110,23 @@ export interface GraphRelationship {
 }
 
 export interface KnowledgeGraph {
+  /** Returns a full array copy — prefer iterNodes() for iteration */
   nodes: GraphNode[],
+  /** Returns a full array copy — prefer iterRelationships() for iteration */
   relationships: GraphRelationship[],
+  /** Zero-copy iterator over nodes */
+  iterNodes: () => IterableIterator<GraphNode>,
+  /** Zero-copy iterator over relationships */
+  iterRelationships: () => IterableIterator<GraphRelationship>,
+  /** Zero-copy forEach — avoids iterator protocol overhead in hot loops */
+  forEachNode: (fn: (node: GraphNode) => void) => void,
+  forEachRelationship: (fn: (rel: GraphRelationship) => void) => void,
+  /** Lookup a single node by id — O(1) */
+  getNode: (id: string) => GraphNode | undefined,
   nodeCount: number,
   relationshipCount: number,
   addNode: (node: GraphNode) => void,
   addRelationship: (relationship: GraphRelationship) => void,
+  removeNode: (nodeId: string) => boolean,
+  removeNodesByFile: (filePath: string) => number,
 }

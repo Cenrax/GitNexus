@@ -2,15 +2,15 @@
  * Embedding Pipeline Module
  * 
  * Orchestrates the background embedding process:
- * 1. Query embeddable nodes from KuzuDB
+ * 1. Query embeddable nodes from LadybugDB
  * 2. Generate text representations
  * 3. Batch embed using transformers.js
- * 4. Update KuzuDB with embeddings
+ * 4. Update LadybugDB with embeddings
  * 5. Create vector index for semantic search
  */
 
-import { initEmbedder, embedBatch, embedText, embeddingToArray, isEmbedderReady } from './embedder';
-import { generateBatchEmbeddingTexts, generateEmbeddingText } from './text-generator';
+import { initEmbedder, embedBatch, embedText, embeddingToArray, isEmbedderReady } from './embedder.js';
+import { generateBatchEmbeddingTexts, generateEmbeddingText } from './text-generator.js';
 import {
   type EmbeddingProgress,
   type EmbeddingConfig,
@@ -19,7 +19,9 @@ import {
   type ModelProgress,
   DEFAULT_EMBEDDING_CONFIG,
   EMBEDDABLE_LABELS,
-} from './types';
+} from './types.js';
+
+const isDev = process.env.NODE_ENV === 'development';
 
 /**
  * Progress callback type
@@ -27,7 +29,7 @@ import {
 export type EmbeddingProgressCallback = (progress: EmbeddingProgress) => void;
 
 /**
- * Query all embeddable nodes from KuzuDB
+ * Query all embeddable nodes from LadybugDB
  * Uses table-specific queries (File has different schema than code elements)
  */
 const queryEmbeddableNodes = async (
@@ -71,7 +73,7 @@ const queryEmbeddableNodes = async (
       }
     } catch (error) {
       // Table might not exist or be empty, continue
-      if (import.meta.env.DEV) {
+      if (isDev) {
         console.warn(`Query for ${label} nodes failed:`, error);
       }
     }
@@ -102,9 +104,23 @@ const batchInsertEmbeddings = async (
  * Create the vector index for semantic search
  * Now indexes the separate CodeEmbedding table
  */
+let vectorExtensionLoaded = false;
+
 const createVectorIndex = async (
   executeQuery: (cypher: string) => Promise<any[]>
 ): Promise<void> => {
+  // LadybugDB v0.15+ requires explicit VECTOR extension loading (once per session)
+  if (!vectorExtensionLoaded) {
+    try {
+      await executeQuery('INSTALL VECTOR');
+      await executeQuery('LOAD EXTENSION VECTOR');
+      vectorExtensionLoaded = true;
+    } catch {
+      // Extension may already be loaded — CREATE_VECTOR_INDEX will fail clearly if not
+      vectorExtensionLoaded = true;
+    }
+  }
+
   const cypher = `
     CALL CREATE_VECTOR_INDEX('CodeEmbedding', 'code_embedding_idx', 'embedding', metric := 'cosine')
   `;
@@ -113,7 +129,7 @@ const createVectorIndex = async (
     await executeQuery(cypher);
   } catch (error) {
     // Index might already exist
-    if (import.meta.env.DEV) {
+    if (isDev) {
       console.warn('Vector index creation warning:', error);
     }
   }
@@ -122,16 +138,18 @@ const createVectorIndex = async (
 /**
  * Run the embedding pipeline
  * 
- * @param executeQuery - Function to execute Cypher queries against KuzuDB
+ * @param executeQuery - Function to execute Cypher queries against LadybugDB
  * @param executeWithReusedStatement - Function to execute with reused prepared statement
  * @param onProgress - Callback for progress updates
  * @param config - Optional configuration override
+ * @param skipNodeIds - Optional set of node IDs that already have embeddings (incremental mode)
  */
 export const runEmbeddingPipeline = async (
   executeQuery: (cypher: string) => Promise<any[]>,
   executeWithReusedStatement: (cypher: string, paramsList: Array<Record<string, any>>) => Promise<void>,
   onProgress: EmbeddingProgressCallback,
-  config: Partial<EmbeddingConfig> = {}
+  config: Partial<EmbeddingConfig> = {},
+  skipNodeIds?: Set<string>,
 ): Promise<void> => {
   const finalConfig = { ...DEFAULT_EMBEDDING_CONFIG, ...config };
 
@@ -144,11 +162,10 @@ export const runEmbeddingPipeline = async (
     });
 
     await initEmbedder((modelProgress: ModelProgress) => {
-      // Report model download progress
       const downloadPercent = modelProgress.progress ?? 0;
       onProgress({
         phase: 'loading-model',
-        percent: Math.round(downloadPercent * 0.2), // 0-20% for model loading
+        percent: Math.round(downloadPercent * 0.2),
         modelDownloadPercent: downloadPercent,
       });
     }, finalConfig);
@@ -159,15 +176,25 @@ export const runEmbeddingPipeline = async (
       modelDownloadPercent: 100,
     });
 
-    if (import.meta.env.DEV) {
+    if (isDev) {
       console.log('🔍 Querying embeddable nodes...');
     }
 
     // Phase 2: Query embeddable nodes
-    const nodes = await queryEmbeddableNodes(executeQuery);
+    let nodes = await queryEmbeddableNodes(executeQuery);
+
+    // Incremental mode: filter out nodes that already have embeddings
+    if (skipNodeIds && skipNodeIds.size > 0) {
+      const beforeCount = nodes.length;
+      nodes = nodes.filter(n => !skipNodeIds.has(n.id));
+      if (isDev) {
+        console.log(`📦 Incremental embeddings: ${beforeCount} total, ${skipNodeIds.size} cached, ${nodes.length} to embed`);
+      }
+    }
+
     const totalNodes = nodes.length;
 
-    if (import.meta.env.DEV) {
+    if (isDev) {
       console.log(`📊 Found ${totalNodes} embeddable nodes`);
     }
 
@@ -206,7 +233,7 @@ export const runEmbeddingPipeline = async (
       // Embed the batch
       const embeddings = await embedBatch(texts);
 
-      // Update KuzuDB with embeddings
+      // Update LadybugDB with embeddings
       const updates = batch.map((node, i) => ({
         id: node.id,
         embedding: embeddingToArray(embeddings[i]),
@@ -236,7 +263,7 @@ export const runEmbeddingPipeline = async (
       totalNodes,
     });
 
-    if (import.meta.env.DEV) {
+    if (isDev) {
       console.log('📇 Creating vector index...');
     }
 
@@ -250,13 +277,13 @@ export const runEmbeddingPipeline = async (
       totalNodes,
     });
 
-    if (import.meta.env.DEV) {
+    if (isDev) {
       console.log('✅ Embedding pipeline complete!');
     }
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     
-    if (import.meta.env.DEV) {
+    if (isDev) {
       console.error('❌ Embedding pipeline error:', error);
     }
 
@@ -313,50 +340,63 @@ export const semanticSearch = async (
     return [];
   }
 
-  // Get metadata for each result by querying each node table
-  const results: SemanticSearchResult[] = [];
-  
+  // Group results by label for batched metadata queries
+  const byLabel = new Map<string, Array<{ nodeId: string; distance: number }>>();
   for (const embRow of embResults) {
     const nodeId = embRow.nodeId ?? embRow[0];
     const distance = embRow.distance ?? embRow[1];
-    
-    // Extract label from node ID (format: Label:path:name)
     const labelEndIdx = nodeId.indexOf(':');
     const label = labelEndIdx > 0 ? nodeId.substring(0, labelEndIdx) : 'Unknown';
-    
-    // Query the specific table for this node
-    // File nodes don't have startLine/endLine
+    if (!byLabel.has(label)) byLabel.set(label, []);
+    byLabel.get(label)!.push({ nodeId, distance });
+  }
+
+  // Batch-fetch metadata per label
+  const results: SemanticSearchResult[] = [];
+
+  for (const [label, items] of byLabel) {
+    const idList = items.map(i => `'${i.nodeId.replace(/'/g, "''")}'`).join(', ');
     try {
       let nodeQuery: string;
       if (label === 'File') {
         nodeQuery = `
-          MATCH (n:File {id: '${nodeId.replace(/'/g, "''")}'}) 
-          RETURN n.name AS name, n.filePath AS filePath
+          MATCH (n:File) WHERE n.id IN [${idList}]
+          RETURN n.id AS id, n.name AS name, n.filePath AS filePath
         `;
       } else {
         nodeQuery = `
-          MATCH (n:${label} {id: '${nodeId.replace(/'/g, "''")}'}) 
-          RETURN n.name AS name, n.filePath AS filePath, 
+          MATCH (n:${label}) WHERE n.id IN [${idList}]
+          RETURN n.id AS id, n.name AS name, n.filePath AS filePath,
                  n.startLine AS startLine, n.endLine AS endLine
         `;
       }
       const nodeRows = await executeQuery(nodeQuery);
-      if (nodeRows.length > 0) {
-        const nodeRow = nodeRows[0];
-        results.push({
-          nodeId,
-          name: nodeRow.name ?? nodeRow[0] ?? '',
-          label,
-          filePath: nodeRow.filePath ?? nodeRow[1] ?? '',
-          distance,
-          startLine: label !== 'File' ? (nodeRow.startLine ?? nodeRow[2]) : undefined,
-          endLine: label !== 'File' ? (nodeRow.endLine ?? nodeRow[3]) : undefined,
-        });
+      const rowMap = new Map<string, any>();
+      for (const row of nodeRows) {
+        const id = row.id ?? row[0];
+        rowMap.set(id, row);
+      }
+      for (const item of items) {
+        const nodeRow = rowMap.get(item.nodeId);
+        if (nodeRow) {
+          results.push({
+            nodeId: item.nodeId,
+            name: nodeRow.name ?? nodeRow[1] ?? '',
+            label,
+            filePath: nodeRow.filePath ?? nodeRow[2] ?? '',
+            distance: item.distance,
+            startLine: label !== 'File' ? (nodeRow.startLine ?? nodeRow[3]) : undefined,
+            endLine: label !== 'File' ? (nodeRow.endLine ?? nodeRow[4]) : undefined,
+          });
+        }
       }
     } catch {
       // Table might not exist, skip
     }
   }
+
+  // Re-sort by distance since batch queries may have mixed order
+  results.sort((a, b) => a.distance - b.distance);
 
   return results;
 };
