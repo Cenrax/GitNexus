@@ -19,7 +19,7 @@
     <img src="https://img.shields.io/badge/License-PolyForm%20Noncommercial-blue.svg" alt="License: PolyForm Noncommercial"/>
   </a>
 
-  <p><strong>Enterprise (SaaS & Self-hosted)</strong> — <a href="https://akonlabs.com">akonlabs.com</a></p>
+  <p><strong>Enterprise (SaaS & Self-hosted)</strong> - <a href="https://akonlabs.com">akonlabs.com</a></p>
 
 </div>
 
@@ -63,11 +63,11 @@ https://github.com/user-attachments/assets/172685ba-8e54-4ea7-9ad1-e31a3398da72
 
 ## Enterprise
 
-GitNexus is available as an **enterprise offering** — either as a fully managed **SaaS** or a **self-hosted** deployment.
+GitNexus is available as an **enterprise offering** - either as a fully managed **SaaS** or a **self-hosted** deployment.
 
 Enterprise includes additional features:
-- **PR Review** — automated pull request analysis with architectural context
-- **Code Wiki** — auto-generated, always up-to-date documentation for your codebase
+- **PR Review** - automated pull request analysis with architectural context
+- **Code Wiki** - auto-generated, always up-to-date documentation for your codebase
 
 👉 Learn more at [akonlabs.com](https://akonlabs.com)
 
